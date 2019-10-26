@@ -1,5 +1,5 @@
 # jpeg2gps
-This utility extracts GPS coordinates from JPEF images, and exports a tabular file.
+This utility extracts GPS coordinates from JPEG images, and exports a tabular file.
 
 You can drop as may files as you wish onto the page.
 
