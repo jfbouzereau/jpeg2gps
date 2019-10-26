@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+#dragspace {
+	position:fixed;
+	top:0px;
+	left:0px;
+	width:100%;
+	height:100%;
+}
+#help {
+	font-family:Times;
+	font-size:36px;
+	font-style:italic;
+	text-align:center;
+	padding-top:100px;
+	color:#CCC;
+}
+#wrapper {
+	display:none;
+	overflow-y:scroll;
+}
+table {	
+	position:absolute;
+	top:0;
+	left:0;
+	font-family:Courier;	
+	font-size:12px;
+	z-index:100;
+}
+</style>
+</head>
+<body>
+<div id="dragspace"></div>
+<div id="help">
+Drag jpeg images to this page.
+<br><br>
+When finished, type "S" to download 
+<br>
+a tabular file of the gps coordinates.
+</div>
+<div id="wrapper">
+<table>
+	<tr>
+		<th width="50" align="left">Index</td>
+		<th width="200" align="left">Name</td>
+		<th width="200" align="left">Longitude</td>
+		<th width="200" align="left">Latitude</td>
+	</tr>
+</table>
+</div>
+</body>
+<script>
+var ifile = -1;	// index of processed file
+var files = [];
+
+document.body.addEventListener("keypress",onkeypress);
+
+var table = document.querySelector("table");
+
+var space = document.querySelector("#dragspace");
+space.addEventListener("dragover", function(event) {
+	event.preventDefault();
+});
+
+space.addEventListener("drop",ondrop);
+
+//***************************************************************************
+
+function ondrop(event) {
+
+	document.querySelector("#help").style.display = "none";
+	document.querySelector("#wrapper").style.display = "block";
+
+	event.preventDefault();
+
+	files = [];
+
+	if(event.dataTransfer.items)
+		for(var i=0;i<event.dataTransfer.items.length;i++)
+			files[i] = event.dataTransfer.items[i].getAsFile();
+	else
+		files = event.dataTransfer.files;
+
+	ifile = -1;
+	read_file();
+}
+
+//***************************************************************************
+
+function read_file() {
+	
+	ifile++;
+	if(ifile>=files.length) return;
+
+	if(in_table(files[ifile].name)) {
+		setTimeout(read_file,0);
+	}
+	else {
+		var reader = new FileReader();
+		reader._name = files[ifile].name;
+		reader.addEventListener("load",onload);
+		reader.addEventListener("error",onerror);
+		reader.readAsArrayBuffer(files[ifile]);
+	}
+}
+
+//***************************************************************************
+
+function in_table(name) {
+	var td = document.querySelectorAll("td");
+	for(var i=0;i<td.length;i+=3) {
+		if(td[i].innerText==name) return true;
+	}
+	return false;
+}
+
+//***************************************************************************
+
+function onerror() {
+	setTimeout(read_file,0);	
+}
+
+//***************************************************************************
+
+function onload(event) {
+
+	var oxif = 0;	// offset of exif
+	var b = new Uint8Array(event.target.result);
+	var lon = 0;
+	var lonref = 0;
+	var lat = 0;	
+	var latref = 0;
+	var bigendian = 0;
+
+	var pos = 0;
+	if(b[pos++]==0xFF)
+	if(b[pos++]==0xD8)
+	while(pos<b.length) {
+
+		if(b[pos++]!=0xFF) break;
+
+		var code = b[pos++];
+
+		var skip = b[pos++]*256+b[pos++]-2;
+		if(code==0xE1)  {
+			var savepos = pos;
+			oxif = pos+6;
+			get_exif();
+			if(lon!=0) break;
+			pos = savepos;
+		}
+
+		if(lon) break;
+		pos+=skip;	
+		
+	}
+
+	//console.log(event.target._name,lat,latref,lon,lonref);
+
+	if(lon) {
+
+		if(latref=="S") lat = -lat;
+		if(lonref=="W") lon = -lon;
+
+		lon = trunc(lon);
+		lat = trunc(lat);
+
+		create_row(event.target._name,lon,lat);
+	}
+
+	setTimeout(read_file,0);
+	return;
+	
+	function get_exif() {		
+		if(b[pos++]!=0x45) return;
+		if(b[pos++]!=0x78) return;	
+		if(b[pos++]!=0x69) return;
+		if(b[pos++]!=0x66) return;
+		if(b[pos++]!=0x00) return;
+		if(b[pos++]!=0x00) return;
+		bigendian = (b[pos++]*256+b[pos++])==0x4949;
+		pos +=2;
+		pos = get_long()+oxif;
+		var ndir = get_short();
+		for(var idir=0;idir<ndir;idir++) {
+			var tag = get_short();
+			var fmt = get_short();
+			var word1 = get_long();
+			var word2 = get_long();
+			if(tag==0x8825) {
+				var savepos = pos;
+				pos = word2+oxif;
+				get_gps_info();	
+				if(lon) break;
+				pos = savepos;
+			}
+		}
+	}
+
+		
+	function get_short() {
+		if(bigendian)
+			return b[pos++]+b[pos++]*256;
+		else
+			return b[pos++]*256+b[pos++];
+	}
+
+	function get_long() {
+		if(bigendian) 
+			return b[pos++]+b[pos++]*256+b[pos++]*256*256+
+				b[pos++]*256*256*256;
+		else
+			return b[pos++]*256*256*256+b[pos++]*256*256+
+				b[pos++]*256+b[pos];
+	}
+
+	function create_row(name,lon,lat) {	
+		var index = document.querySelectorAll("table tr").length;
+		var tr = document.createElement("tr");
+		tr.innerHTML = "<td>"+index+"</td>"+
+						"<td>"+name+"</td>"+
+						"<td>"+lon+"</td>"+
+						"<td>"+lat+"</td>";
+		table.appendChild(tr);
+	}
+
+	function get_gps_info() {
+		var ne = get_short();
+		for(var ie=0;ie<ne;ie++) {
+			var tag = get_short();
+			var fmt = get_short();
+			var word1 = get_long();
+			var word2 = get_long();
+			if(tag==1) {
+				latref = String.fromCharCode(word2);
+			}
+			if(tag==2) {
+				var savepos = pos;
+				pos = word2 + oxif;
+				var deg = get_long()/get_long();
+				var min = get_long()/get_long();
+				var sec = get_long()/get_long();
+				lat = deg+min/60+sec/3600;
+				pos = savepos;
+			}
+			if(tag==3) {
+				lonref = String.fromCharCode(word2);
+			}
+			if(tag==4) {
+				var savepos = pos;
+				pos = word2 + oxif;
+				var deg = get_long()/get_long();
+				var min = get_long()/get_long();
+				var sec = get_long()/get_long();
+				lon = deg+min/60+sec/3600;
+				pos = savepos;
+			}
+		}
+	}
+}	
+
+//***************************************************************************
+
+function onkeypress(event) {
+	console.log("KEYPRESS");
+	console.log(event);
+	var key = event.key.toLowerCase();
+	if(key!="s") return;
+
+	// download the file
+	download();	
+}
+
+//***************************************************************************
+
+function download() {
+
+	var els = document.querySelectorAll("table tr th,table tr td");
+	
+	var text = "";
+	for(var i=0;i<els.length;i++) {
+		text += els[i].innerText;
+		text += (i%4)==3 ? '\n' : '\t';	
+	}
+
+	var el = document.createElement("a");
+	el.setAttribute("href","data:text/plain;charset=utf-8,"+
+		encodeURIComponent(text));	
+	el.setAttribute("download","gps.tab");
+	document.body.appendChild(el);
+	el.click();
+	document.body.removeChild(el);
+}
+
+//***************************************************************************
+
+function trunc(x) {
+
+	return ((x*10000000)|0)/10000000;
+}
+
+//***************************************************************************
+
+</script>
+</html>
